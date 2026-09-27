@@ -1,0 +1,186 @@
+name: Spot Separation
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  separate:
+    if: contains(github.event.issue.labels.*.name, 'separate') || startsWith(github.event.issue.title, '[Separate]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ghostscript
+          pip install Pillow
+
+      - name: Parse issue body for spot selections
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || '';
+            
+            // Extract selected spots from checkboxes: - [x] SpotName
+            const selectedSpots = [];
+            const checkboxRegex = /- \[x\]\s+(.+)/gi;
+            let match;
+            while ((match = checkboxRegex.exec(body)) !== null) {
+              const spot = match[1].trim();
+              // Skip non-spot lines
+              if (spot && !spot.startsWith('http') && !spot.includes('---')) {
+                selectedSpots.push(spot);
+              }
+            }
+            
+            if (selectedSpots.length === 0) {
+              core.setFailed('No spot colors selected. Check the boxes next to the colors you want separated.');
+              return;
+            }
+            
+            core.setOutput('spots', selectedSpots.join(','));
+            core.info(`Selected spots: ${selectedSpots.join(', ')}`);
+            
+            // Find PDF attachment URLs in the issue body
+            // GitHub uploads show as: [filename.pdf](https://github.com/user/repo/files/...)
+            // or as image-style: ![filename](url) but PDFs are typically links
+            const urlRegex = /\[([^\]]*\.pdf)\]\((https:\/\/[^\)]+)\)/gi;
+            const pdfs = [];
+            while ((match = urlRegex.exec(body)) !== null) {
+              pdfs.push({ name: match[1], url: match[2] });
+            }
+            
+            // Also check for direct upload URLs (newer GitHub format)
+            const directRegex = /(https:\/\/github\.com\/[^\s\)]+\.pdf)/gi;
+            while ((match = directRegex.exec(body)) !== null) {
+              // Avoid duplicates
+              if (!pdfs.some(p => p.url === match[1])) {
+                const name = match[1].split('/').pop();
+                pdfs.push({ name, url: match[1] });
+              }
+            }
+
+            // Also check for user-content URLs (file attachments)
+            const ucRegex = /(https:\/\/github\.user-content\.s3[^\s\)]+\.pdf)/gi;
+            while ((match = ucRegex.exec(body)) !== null) {
+              if (!pdfs.some(p => p.url === match[1])) {
+                const name = decodeURIComponent(match[1].split('/').pop().split('?')[0]);
+                pdfs.push({ name, url: match[1] });
+              }
+            }
+            
+            if (pdfs.length === 0) {
+              core.setFailed('No PDF files found in the issue. Attach PDF files to the issue body.');
+              return;
+            }
+            
+            core.setOutput('pdfs', JSON.stringify(pdfs));
+            core.info(`Found ${pdfs.length} PDF(s): ${pdfs.map(p => p.name).join(', ')}`);
+
+      - name: Download PDFs
+        run: |
+          mkdir -p input output
+          echo '${{ steps.parse.outputs.pdfs }}' | python3 -c "
+          import json, sys, urllib.request, urllib.parse
+          pdfs = json.load(sys.stdin)
+          for i, pdf in enumerate(pdfs):
+              name = pdf['name']
+              url = pdf['url']
+              print(f'Downloading: {name}')
+              urllib.request.urlretrieve(url, f'input/{name}')
+              print(f'  Saved: input/{name}')
+          "
+
+      - name: Run spot separation
+        run: |
+          IFS=',' read -ra SPOTS <<< "${{ steps.parse.outputs.spots }}"
+          SPOT_ARGS=""
+          for spot in "${SPOTS[@]}"; do
+            SPOT_ARGS="$SPOT_ARGS $spot"
+          done
+          
+          python scripts/separate.py input/*.pdf \
+            --spots $SPOT_ARGS \
+            --dpi 150 \
+            --outdir output \
+            --gs gs
+
+      - name: Create zip artifact
+        run: |
+          cd output
+          zip -r ../separations.zip *.pdf
+          cd ..
+          echo "Files in output:"
+          ls -lh output/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spot-separations
+          path: output/*.pdf
+          retention-days: 7
+
+      - name: Comment on issue with results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const files = fs.readdirSync('output').filter(f => f.endsWith('.pdf'));
+            
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            
+            let body = `## ✅ Separation Complete\n\n`;
+            body += `**${files.length} file(s) created:**\n\n`;
+            files.forEach(f => {
+              const stats = fs.statSync(`output/${f}`);
+              const sizeKB = (stats.size / 1024).toFixed(0);
+              body += `- \`${f}\` (${sizeKB} KB)\n`;
+            });
+            body += `\n**[⬇️ Download Separations](${runUrl})**\n`;
+            body += `\nClick the link above → scroll to "Artifacts" → download \`spot-separations\`.\n`;
+            body += `\n*Files will be available for 7 days.*`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });
+
+      - name: Close issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: 'closed'
+            });
+
+      - name: Comment on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## ❌ Separation Failed\n\nSomething went wrong. [View the log](${runUrl}) for details.`
+            });
