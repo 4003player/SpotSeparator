@@ -291,28 +291,25 @@ async function startSeparation() {
       })
     });
 
-    // Step 3: Wait for Action
+    // Step 3: Wait for the separation Action (not pages deploys)
     text.textContent = 'Waiting for GitHub Actions to start...';
     fill.style.width = '55%';
     await sleep(5000);
 
     let runId = null;
-    for (let attempt = 0; attempt < 10; attempt++) {
+    for (let attempt = 0; attempt < 20; attempt++) {
       const runsResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/actions/runs?event=issues&per_page=5`);
       const runs = await runsResp.json();
+      // Find the most recent issues-triggered run
       const run = runs.workflow_runs.find(r =>
-        r.head_branch === 'master' && r.status !== 'completed' ||
-        (r.created_at && new Date(r.created_at) > new Date(Date.now() - 120000))
+        r.created_at && new Date(r.created_at) > new Date(Date.now() - 300000)
       );
       if (run) { runId = run.id; break; }
       await sleep(3000);
     }
 
     if (!runId) {
-      const runsResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/actions/runs?event=issues&per_page=5`);
-      const runs = await runsResp.json();
-      if (runs.workflow_runs.length > 0) runId = runs.workflow_runs[0].id;
-      else throw new Error('Could not find the workflow run.');
+      throw new Error('Could not find the workflow run. Check GitHub Actions manually.');
     }
 
     text.textContent = 'Ghostscript is separating spot colors...';
@@ -430,7 +427,7 @@ async function extractZipEntries(data) {
           fileData = data.slice(dataStart, dataStart + compSize);
         } else if (compression === 8) {
           const raw = data.slice(dataStart, dataStart + compSize);
-          const ds = new DecompressionStream('raw');
+          const ds = new DecompressionStream('deflate-raw');
           const writer = ds.writable.getWriter();
           writer.write(raw);
           writer.close();
