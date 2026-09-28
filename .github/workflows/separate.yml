@@ -92,30 +92,16 @@ jobs:
             core.info(`Found ${pdfs.length} PDF(s): ${pdfs.map(p => p.name).join(', ')}`);
 
       - name: Download PDFs
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p input output
           echo '${{ steps.parse.outputs.pdfs }}' | python3 -c "
-          import json, sys, os, subprocess
+          import json, sys, urllib.request
           pdfs = json.load(sys.stdin)
           for i, pdf in enumerate(pdfs):
               name = pdf['name']
               url = pdf['url']
               print(f'Downloading: {name}')
-              # Use gh CLI for authenticated downloads (handles draft releases)
-              token = os.environ.get('GH_TOKEN', '')
-              import urllib.request
-              req = urllib.request.Request(url)
-              req.add_header('Authorization', f'Bearer {token}')
-              req.add_header('Accept', 'application/octet-stream')
-              try:
-                  urllib.request.urlretrieve(url, f'input/{name}')
-              except:
-                  # Try with auth header for draft release assets
-                  with urllib.request.urlopen(req) as resp:
-                      with open(f'input/{name}', 'wb') as out:
-                          out.write(resp.read())
+              urllib.request.urlretrieve(url, f'input/{name}')
               print(f'  Saved: input/{name}')
           "
 
