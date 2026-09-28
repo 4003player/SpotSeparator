@@ -292,58 +292,19 @@ async function startSeparation() {
     });
     const issue = await issueResp.json();
 
-    // Step 3: Wait for the separation Action (not pages deploys)
-    text.textContent = 'Waiting for GitHub Actions to start...';
-    fill.style.width = '55%';
-    await sleep(5000);
-
-    let runId = null;
-    for (let attempt = 0; attempt < 20; attempt++) {
-      const runsResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/actions/runs?event=issues&per_page=5`);
-      const runs = await runsResp.json();
-      // Find the most recent issues-triggered run
-      const run = runs.workflow_runs.find(r =>
-        r.created_at && new Date(r.created_at) > new Date(Date.now() - 300000)
-      );
-      if (run) { runId = run.id; break; }
-      await sleep(3000);
-    }
-
-    if (!runId) {
-      throw new Error('Could not find the workflow run. Check GitHub Actions manually.');
-    }
-
+    // Step 3: Wait for the bot comment with download links
+    // (No need to track the Action run — just wait for results)
     text.textContent = 'Ghostscript is separating spot colors...';
-    fill.style.width = '65%';
+    fill.style.width = '55%';
 
-    // Step 4: Poll until done
-    let status = 'in_progress';
-    let conclusion = '';
-    for (let attempt = 0; attempt < 60; attempt++) {
-      const runResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/actions/runs/${runId}`);
-      const runData = await runResp.json();
-      status = runData.status;
-      conclusion = runData.conclusion;
-      if (status === 'completed') break;
-      fill.style.width = `${65 + Math.min(attempt, 30)}%`;
-      text.textContent = `Ghostscript is separating spot colors... (${attempt * 5}s)`;
-      await sleep(5000);
-    }
-
-    if (conclusion === 'failure') throw new Error('Separation failed. Check GitHub Actions log.');
-
-    // Step 5: Wait for results to appear in the repo
-    text.textContent = 'Downloading results...';
-    fill.style.width = '90%';
-
-    // Poll the issue for the bot's comment with download links
     let downloadLinks = [];
-    for (let attempt = 0; attempt < 20; attempt++) {
+    for (let attempt = 0; attempt < 60; attempt++) {
       const commentsResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/issues/${issue.number}/comments`);
       const comments = await commentsResp.json();
+      
+      // Check for success
       const botComment = comments.find(c => c.body && c.body.includes('Separation Complete'));
       if (botComment) {
-        // Extract raw.githubusercontent URLs from the comment
         const linkRegex = /\[([^\]]+\.pdf)\]\((https:\/\/raw\.githubusercontent\.com[^\)]+)\)/gi;
         let m;
         while ((m = linkRegex.exec(botComment.body)) !== null) {
@@ -351,8 +312,15 @@ async function startSeparation() {
         }
         break;
       }
-      fill.style.width = `${90 + Math.min(attempt, 8)}%`;
-      text.textContent = `Waiting for results... (${attempt * 5}s)`;
+      
+      // Check for failure
+      const failComment = comments.find(c => c.body && c.body.includes('Separation Failed'));
+      if (failComment) {
+        throw new Error('Separation failed on GitHub. Check the Actions log for details.');
+      }
+
+      fill.style.width = `${55 + Math.min(attempt, 40)}%`;
+      text.textContent = `Ghostscript is separating spot colors... (${attempt * 5}s)`;
       await sleep(5000);
     }
 
