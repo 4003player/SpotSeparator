@@ -282,7 +282,7 @@ async function startSeparation() {
     });
     issueBody += `\n---\n_Upload folder: uploads/${timestamp}_\n`;
 
-    await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/issues`, {
+    const issueResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/issues`, {
       method: 'POST',
       body: JSON.stringify({
         title: `[Separate] ${files.map(f => f.name).join(', ')}`,
@@ -290,6 +290,7 @@ async function startSeparation() {
         labels: ['separate']
       })
     });
+    const issue = await issueResp.json();
 
     // Step 3: Wait for the separation Action (not pages deploys)
     text.textContent = 'Waiting for GitHub Actions to start...';
@@ -331,44 +332,65 @@ async function startSeparation() {
 
     if (conclusion === 'failure') throw new Error('Separation failed. Check GitHub Actions log.');
 
-    // Step 5: Download artifact directly as zip
+    // Step 5: Wait for results to appear in the repo
     text.textContent = 'Downloading results...';
-    fill.style.width = '95%';
+    fill.style.width = '90%';
 
-    const artifactsResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/actions/runs/${runId}/artifacts`);
-    const artifacts = await artifactsResp.json();
-    const artifact = artifacts.artifacts.find(a => a.name === 'spot-separations');
-    if (!artifact) throw new Error('No artifacts found.');
+    // Poll the issue for the bot's comment with download links
+    let downloadLinks = [];
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const commentsResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/issues/${issue.number}/comments`);
+      const comments = await commentsResp.json();
+      const botComment = comments.find(c => c.body && c.body.includes('Separation Complete'));
+      if (botComment) {
+        // Extract raw.githubusercontent URLs from the comment
+        const linkRegex = /\[([^\]]+\.pdf)\]\((https:\/\/raw\.githubusercontent\.com[^\)]+)\)/gi;
+        let m;
+        while ((m = linkRegex.exec(botComment.body)) !== null) {
+          downloadLinks.push({ name: m[1], url: m[2] });
+        }
+        break;
+      }
+      fill.style.width = `${90 + Math.min(attempt, 8)}%`;
+      text.textContent = `Waiting for results... (${attempt * 5}s)`;
+      await sleep(5000);
+    }
 
-    const dlResp = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/artifacts/${artifact.id}/zip`, {
-      headers: { 'Authorization': `Bearer ${TOKEN}`, 'Accept': 'application/vnd.github+json' }
-    });
-
-    if (!dlResp.ok) throw new Error('Failed to download artifacts.');
-
-    const zipBlob = await dlResp.blob();
-    const url = URL.createObjectURL(zipBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'spot-separations.zip';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    if (downloadLinks.length === 0) {
+      throw new Error('Timed out waiting for results. Check the GitHub issue for status.');
+    }
 
     fill.style.width = '100%';
     progress.className = 'progress-panel done';
     title.textContent = '✅ Done!';
-    text.textContent = 'Separation complete — check your Downloads folder!';
+    text.textContent = 'Separation complete!';
 
     download.style.display = 'block';
-    const sizeKB = (zipBlob.size / 1024).toFixed(0);
     document.getElementById('downloadInfo').textContent =
-      `${files.length} file(s) processed • ${spots.join(', ')} extracted • ${sizeKB} KB`;
+      `${downloadLinks.length} file(s) • ${spots.join(', ')} extracted`;
+
     const dlList = document.getElementById('downloadList');
-    dlList.innerHTML = `<div class="download-item">
-      <span class="dl-name">📦 spot-separations.zip</span>
-      <a href="${url}" download="spot-separations.zip">⬇️ Download Again</a>
-    </div>`;
+    dlList.innerHTML = '';
+    for (const dl of downloadLinks) {
+      // Fetch and trigger download
+      const resp = await fetch(dl.url);
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const sizeKB = (blob.size / 1024).toFixed(0);
+
+      const div = document.createElement('div');
+      div.className = 'download-item';
+      div.innerHTML = `
+        <div><span class="dl-name">📄 ${dl.name}</span><span class="dl-size">${sizeKB} KB</span></div>
+        <a href="${blobUrl}" download="${dl.name}">⬇️ Download</a>
+      `;
+      dlList.appendChild(div);
+
+      // Auto-download
+      const a = document.createElement('a');
+      a.href = blobUrl; a.download = dl.name;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    }
 
     // Cleanup uploaded files
     try {

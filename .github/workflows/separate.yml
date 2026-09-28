@@ -5,6 +5,7 @@ on:
     types: [opened]
 
 permissions:
+  contents: write
   issues: write
 
 jobs:
@@ -35,61 +36,52 @@ jobs:
           script: |
             const body = context.payload.issue.body || '';
             
-            // Extract selected spots from checkboxes: - [x] SpotName
             const selectedSpots = [];
             const checkboxRegex = /- \[x\]\s+(.+)/gi;
             let match;
             while ((match = checkboxRegex.exec(body)) !== null) {
               const spot = match[1].trim();
-              // Skip non-spot lines
               if (spot && !spot.startsWith('http') && !spot.includes('---')) {
                 selectedSpots.push(spot);
               }
             }
             
             if (selectedSpots.length === 0) {
-              core.setFailed('No spot colors selected. Check the boxes next to the colors you want separated.');
+              core.setFailed('No spot colors selected.');
               return;
             }
             
             core.setOutput('spots', selectedSpots.join(','));
             core.info(`Selected spots: ${selectedSpots.join(', ')}`);
             
-            // Find PDF attachment URLs in the issue body
-            // GitHub uploads show as: [filename.pdf](https://github.com/user/repo/files/...)
-            // or as image-style: ![filename](url) but PDFs are typically links
+            // Find PDF URLs in issue body: [name.pdf](url)
             const urlRegex = /\[([^\]]*\.pdf)\]\((https:\/\/[^\)]+)\)/gi;
             const pdfs = [];
             while ((match = urlRegex.exec(body)) !== null) {
               pdfs.push({ name: match[1], url: match[2] });
             }
             
-            // Also check for direct upload URLs (newer GitHub format)
+            // Also check for direct GitHub URLs
             const directRegex = /(https:\/\/github\.com\/[^\s\)]+\.pdf)/gi;
             while ((match = directRegex.exec(body)) !== null) {
-              // Avoid duplicates
               if (!pdfs.some(p => p.url === match[1])) {
                 const name = match[1].split('/').pop();
                 pdfs.push({ name, url: match[1] });
               }
             }
-
-            // Also check for user-content URLs (file attachments)
-            const ucRegex = /(https:\/\/github\.user-content\.s3[^\s\)]+\.pdf)/gi;
-            while ((match = ucRegex.exec(body)) !== null) {
-              if (!pdfs.some(p => p.url === match[1])) {
-                const name = decodeURIComponent(match[1].split('/').pop().split('?')[0]);
-                pdfs.push({ name, url: match[1] });
-              }
-            }
             
             if (pdfs.length === 0) {
-              core.setFailed('No PDF files found in the issue. Attach PDF files to the issue body.');
+              core.setFailed('No PDF files found in the issue.');
               return;
             }
             
+            // Extract upload folder timestamp from issue body
+            const folderMatch = body.match(/Upload folder: uploads\/(\d+)/);
+            const timestamp = folderMatch ? folderMatch[1] : '';
+            core.setOutput('timestamp', timestamp);
+            
             core.setOutput('pdfs', JSON.stringify(pdfs));
-            core.info(`Found ${pdfs.length} PDF(s): ${pdfs.map(p => p.name).join(', ')}`);
+            core.info(`Found ${pdfs.length} PDF(s)`);
 
       - name: Download PDFs
         run: |
@@ -119,40 +111,43 @@ jobs:
             --outdir output \
             --gs gs
 
-      - name: Create zip artifact
+      - name: Commit output PDFs to repo
+        id: commit
         run: |
-          cd output
-          zip -r ../separations.zip *.pdf
-          cd ..
-          echo "Files in output:"
-          ls -lh output/
+          TIMESTAMP="${{ steps.parse.outputs.timestamp }}"
+          OUTDIR="results/${TIMESTAMP}"
+          mkdir -p "$OUTDIR"
+          cp output/*.pdf "$OUTDIR/"
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "results/"
+          git commit -m "Separation results for issue #${{ github.event.issue.number }}"
+          git push
+          
+          # Output the file list for the comment
+          echo "outdir=$OUTDIR" >> $GITHUB_OUTPUT
+          ls output/*.pdf | while read f; do
+            basename "$f"
+          done > /tmp/filelist.txt
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: spot-separations
-          path: output/*.pdf
-          retention-days: 7
-
-      - name: Comment on issue with results
+      - name: Comment on issue with download links
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
+            const outdir = '${{ steps.commit.outputs.outdir }}';
             const files = fs.readdirSync('output').filter(f => f.endsWith('.pdf'));
             
-            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            
             let body = `## ✅ Separation Complete\n\n`;
-            body += `**${files.length} file(s) created:**\n\n`;
+            body += `**${files.length} file(s) ready for download:**\n\n`;
             files.forEach(f => {
               const stats = fs.statSync(`output/${f}`);
               const sizeKB = (stats.size / 1024).toFixed(0);
-              body += `- \`${f}\` (${sizeKB} KB)\n`;
+              const rawUrl = `https://raw.githubusercontent.com/${context.repo.owner}/${context.repo.repo}/master/${outdir}/${f}`;
+              body += `- [${f}](${rawUrl}) (${sizeKB} KB)\n`;
             });
-            body += `\n**[⬇️ Download Separations](${runUrl})**\n`;
-            body += `\nClick the link above → scroll to "Artifacts" → download \`spot-separations\`.\n`;
-            body += `\n*Files will be available for 7 days.*`;
+            body += `\n_Results will be cleaned up automatically._`;
             
             await github.rest.issues.createComment({
               owner: context.repo.owner,
