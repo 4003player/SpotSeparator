@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spot Separator</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:#0d1117;color:#e6edf3;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:40px 20px}
+h1{font-size:28px;margin-bottom:8px}
+.subtitle{color:#7d8590;margin-bottom:30px;font-size:14px}
+.container{width:100%;max-width:700px}
+
+/* Drop zone */
+.dropzone{border:2px dashed #30363d;border-radius:12px;padding:60px 20px;text-align:center;cursor:pointer;transition:all .2s;margin-bottom:20px;background:#161b22}
+.dropzone:hover,.dropzone.active{border-color:#58a6ff;background:#1c2333}
+.dropzone h3{color:#58a6ff;margin-bottom:8px;font-size:18px}
+.dropzone p{color:#7d8590;font-size:14px}
+.dropzone input{display:none}
+
+/* File list */
+.file-list{margin-bottom:20px}
+.file-item{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.file-item .name{font-size:14px;color:#e6edf3}
+.file-item .size{font-size:12px;color:#7d8590}
+.file-item .remove{background:none;border:none;color:#f85149;cursor:pointer;font-size:16px;padding:4px 8px}
+
+/* Spot checkboxes */
+.spots-panel{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;margin-bottom:20px;display:none}
+.spots-panel h3{margin-bottom:12px;font-size:16px;color:#e6edf3}
+.spot-row{display:flex;align-items:center;padding:8px 0;border-bottom:1px solid #21262d}
+.spot-row:last-child{border-bottom:none}
+.spot-row label{display:flex;align-items:center;cursor:pointer;font-size:14px;gap:8px;width:100%}
+.spot-row input[type=checkbox]{width:18px;height:18px;accent-color:#58a6ff}
+.spot-name{flex:1}
+.spot-type{font-size:12px;color:#7d8590;padding:2px 8px;background:#21262d;border-radius:4px}
+
+/* Buttons */
+.btn{padding:12px 24px;border-radius:8px;border:none;font-size:16px;font-weight:600;cursor:pointer;transition:all .2s;width:100%}
+.btn-primary{background:#238636;color:#fff}
+.btn-primary:hover{background:#2ea043}
+.btn-primary:disabled{background:#21262d;color:#484f58;cursor:not-allowed}
+.btn-secondary{background:#21262d;color:#e6edf3;border:1px solid #30363d;margin-top:8px}
+.btn-secondary:hover{background:#30363d}
+
+/* Progress */
+.progress-panel{display:none;background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;margin-bottom:20px;text-align:center}
+.progress-bar{height:6px;background:#21262d;border-radius:3px;margin:16px 0;overflow:hidden}
+.progress-fill{height:100%;background:#58a6ff;border-radius:3px;transition:width .5s;width:0}
+.progress-text{color:#7d8590;font-size:14px}
+.progress-panel.done .progress-fill{background:#238636;width:100%}
+.progress-panel.error .progress-fill{background:#f85149;width:100%}
+
+/* Download */
+.download-panel{display:none;background:#0f2d1a;border:1px solid #238636;border-radius:12px;padding:24px;text-align:center;margin-bottom:20px}
+.download-panel h3{color:#3fb950;margin-bottom:8px;font-size:20px}
+.download-panel p{color:#7d8590;font-size:14px;margin-bottom:16px}
+.btn-download{background:#238636;color:#fff;padding:14px 32px;border-radius:8px;border:none;font-size:18px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
+.btn-download:hover{background:#2ea043}
+
+/* Settings */
+.settings{margin-top:20px;text-align:center}
+.settings button{background:none;border:none;color:#484f58;cursor:pointer;font-size:12px}
+.settings button:hover{color:#7d8590}
+.token-input{display:none;margin-top:10px}
+.token-input input{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 12px;color:#e6edf3;width:100%;max-width:500px;font-size:13px;font-family:monospace}
+.token-input .btn{max-width:500px;margin:8px auto 0;font-size:14px;padding:8px}
+
+/* Status */
+.status-msg{text-align:center;padding:8px;font-size:14px;border-radius:6px;margin-bottom:12px;display:none}
+.status-msg.error{display:block;background:#2d0a0a;color:#f85149;border:1px solid #f8514933}
+.status-msg.info{display:block;background:#0a1d2d;color:#58a6ff;border:1px solid #58a6ff33}
+</style>
+</head>
+<body>
+
+<h1>🎨 Spot Separator</h1>
+<p class="subtitle">Extract spot color channels from PDFs — OPW, Dieline, CutContour</p>
+
+<div class="container">
+  <div id="statusMsg" class="status-msg"></div>
+
+  <!-- Drop Zone -->
+  <div class="dropzone" id="dropzone" onclick="document.getElementById('fileInput').click()">
+    <h3>📄 Drop PDF files here</h3>
+    <p>or click to browse — multiple files OK (25 MB max each)</p>
+    <input type="file" id="fileInput" accept=".pdf" multiple>
+  </div>
+
+  <!-- File List -->
+  <div class="file-list" id="fileList"></div>
+
+  <!-- Spot Selection -->
+  <div class="spots-panel" id="spotsPanel">
+    <h3>Select channels to extract:</h3>
+    <div id="spotsList">
+      <div class="spot-row">
+        <label><input type="checkbox" value="OPW" checked><span class="spot-name">OPW</span><span class="spot-type">White</span></label>
+      </div>
+      <div class="spot-row">
+        <label><input type="checkbox" value="Dieline"><span class="spot-name">Dieline</span><span class="spot-type">Cut</span></label>
+      </div>
+      <div class="spot-row">
+        <label><input type="checkbox" value="CutContour"><span class="spot-name">CutContour</span><span class="spot-type">Cut</span></label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Separate Button -->
+  <button class="btn btn-primary" id="separateBtn" disabled onclick="startSeparation()">Separate</button>
+
+  <!-- Progress -->
+  <div class="progress-panel" id="progressPanel">
+    <h3 id="progressTitle">⏳ Separating...</h3>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <p class="progress-text" id="progressText">Uploading files...</p>
+  </div>
+
+  <!-- Download -->
+  <div class="download-panel" id="downloadPanel">
+    <h3>✅ Separation Complete!</h3>
+    <p id="downloadInfo"></p>
+    <a class="btn-download" id="downloadLink" href="#" target="_blank">⬇️ Download Separations</a>
+  </div>
+
+  <!-- Settings -->
+  <div class="settings">
+    <button onclick="toggleToken()">⚙️ Token Settings</button>
+    <div class="token-input" id="tokenInput">
+      <p style="color:#7d8590;font-size:12px;margin-bottom:8px">GitHub Personal Access Token (stored in your browser only)</p>
+      <input type="password" id="tokenField" placeholder="github_pat_...">
+      <button class="btn btn-secondary" onclick="saveToken()" style="max-width:500px">Save Token</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const REPO_OWNER = '4003player';
+const REPO_NAME = 'SpotSeparator';
+const TOKEN_KEY = 'spot_separator_token';
+
+let files = [];
+
+// --- Token Management ---
+function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || '';
+}
+function saveToken() {
+  const val = document.getElementById('tokenField').value.trim();
+  if (val) {
+    localStorage.setItem(TOKEN_KEY, val);
+    showStatus('Token saved!', 'info');
+    document.getElementById('tokenInput').style.display = 'none';
+  }
+}
+function toggleToken() {
+  const el = document.getElementById('tokenInput');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  document.getElementById('tokenField').value = getToken();
+}
+
+// --- Status ---
+function showStatus(msg, type) {
+  const el = document.getElementById('statusMsg');
+  el.textContent = msg;
+  el.className = 'status-msg ' + type;
+  if (type === 'info') setTimeout(() => { el.className = 'status-msg'; }, 3000);
+}
+function clearStatus() {
+  document.getElementById('statusMsg').className = 'status-msg';
+}
+
+// --- File Handling ---
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+
+dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('active'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('active'));
+dropzone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropzone.classList.remove('active');
+  addFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', () => addFiles(fileInput.files));
+
+function addFiles(newFiles) {
+  for (const f of newFiles) {
+    if (!f.name.toLowerCase().endsWith('.pdf')) {
+      showStatus(`${f.name} is not a PDF — skipped`, 'error');
+      continue;
+    }
+    if (f.size > 25 * 1024 * 1024) {
+      showStatus(`${f.name} exceeds 25 MB limit — skipped`, 'error');
+      continue;
+    }
+    if (!files.some(x => x.name === f.name)) {
+      files.push(f);
+    }
+  }
+  renderFiles();
+}
+
+function removeFile(idx) {
+  files.splice(idx, 1);
+  renderFiles();
+}
+
+function renderFiles() {
+  const list = document.getElementById('fileList');
+  list.innerHTML = files.map((f, i) => `
+    <div class="file-item">
+      <div>
+        <div class="name">📄 ${f.name}</div>
+        <div class="size">${(f.size / 1024 / 1024).toFixed(1)} MB</div>
+      </div>
+      <button class="remove" onclick="removeFile(${i})">✕</button>
+    </div>
+  `).join('');
+
+  document.getElementById('spotsPanel').style.display = files.length ? 'block' : 'none';
+  document.getElementById('separateBtn').disabled = files.length === 0;
+}
+
+// --- GitHub API Helpers ---
+async function ghFetch(path, opts = {}) {
+  const token = getToken();
+  if (!token) throw new Error('No GitHub token configured. Click ⚙️ Token Settings below.');
+  const resp = await fetch(`https://api.github.com${path}`, {
+    ...opts,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(opts.headers || {})
+    }
+  });
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(`GitHub API error ${resp.status}: ${body}`);
+  }
+  return resp;
+}
+
+// --- Main Pipeline ---
+async function startSeparation() {
+  clearStatus();
+  const token = getToken();
+  if (!token) {
+    showStatus('No token configured. Click ⚙️ Token Settings to add your GitHub Personal Access Token.', 'error');
+    return;
+  }
+
+  const spots = [];
+  document.querySelectorAll('#spotsList input[type=checkbox]:checked').forEach(cb => spots.push(cb.value));
+  if (spots.length === 0) {
+    showStatus('Select at least one spot color to extract.', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('separateBtn');
+  btn.disabled = true;
+  btn.textContent = 'Working...';
+
+  const progress = document.getElementById('progressPanel');
+  const fill = document.getElementById('progressFill');
+  const title = document.getElementById('progressTitle');
+  const text = document.getElementById('progressText');
+  const download = document.getElementById('downloadPanel');
+
+  progress.style.display = 'block';
+  progress.className = 'progress-panel';
+  download.style.display = 'none';
+  fill.style.width = '10%';
+  title.textContent = '⏳ Separating...';
+  text.textContent = 'Creating issue with PDFs...';
+
+  try {
+    // Step 1: Build issue body with file attachments
+    // GitHub Issues API doesn't support file uploads directly.
+    // We need to use the releases API to upload assets, then link them.
+    // Actually, the simplest approach: create a release, upload PDFs as assets,
+    // then create an issue referencing the download URLs.
+
+    text.textContent = 'Creating release for file upload...';
+    fill.style.width = '15%';
+
+    // Create a temporary release
+    const tag = `sep-${Date.now()}`;
+    const releaseResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/releases`, {
+      method: 'POST',
+      body: JSON.stringify({
+        tag_name: tag,
+        name: `Separation ${new Date().toLocaleString()}`,
+        body: 'Temporary release for spot separation job',
+        draft: true
+      })
+    });
+    const release = await releaseResp.json();
+    const releaseId = release.id;
+    const uploadUrl = release.upload_url.replace('{?name,label}', '');
+
+    // Step 2: Upload each PDF as a release asset
+    const assetUrls = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      text.textContent = `Uploading ${f.name} (${i + 1}/${files.length})...`;
+      fill.style.width = `${15 + (i / files.length) * 30}%`;
+
+      const buffer = await f.arrayBuffer();
+      const assetResp = await fetch(`${uploadUrl}?name=${encodeURIComponent(f.name)}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/pdf',
+          'Accept': 'application/vnd.github+json'
+        },
+        body: buffer
+      });
+      if (!assetResp.ok) throw new Error(`Failed to upload ${f.name}: ${assetResp.status}`);
+      const asset = await assetResp.json();
+      assetUrls.push({ name: f.name, url: asset.browser_download_url, id: asset.id });
+    }
+
+    // Step 3: Create issue with download links and spot selections
+    text.textContent = 'Creating separation job...';
+    fill.style.width = '50%';
+
+    let issueBody = '## PDF Files\n\n';
+    assetUrls.forEach(a => {
+      issueBody += `- [${a.name}](${a.url})\n`;
+    });
+    issueBody += '\n## Select Spot Colors to Extract\n\n';
+    spots.forEach(s => {
+      issueBody += `- [x] ${s}\n`;
+    });
+    // Add unchecked spots for reference
+    const allSpots = ['OPW', 'Dieline', 'CutContour'];
+    allSpots.forEach(s => {
+      if (!spots.includes(s)) {
+        issueBody += `- [ ] ${s}\n`;
+      }
+    });
+    issueBody += `\n---\n_Release: ${tag} | Release ID: ${releaseId}_\n`;
+
+    const issueResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/issues`, {
+      method: 'POST',
+      body: JSON.stringify({
+        title: `[Separate] ${files.map(f => f.name).join(', ')}`,
+        body: issueBody,
+        labels: ['separate']
+      })
+    });
+    const issue = await issueResp.json();
+
+    // Step 4: Poll for workflow completion
+    text.textContent = 'Waiting for GitHub Actions to start...';
+    fill.style.width = '55%';
+
+    // Wait a moment for the Action to trigger
+    await sleep(5000);
+
+    // Find the workflow run
+    let runId = null;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const runsResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/actions/runs?event=issues&per_page=5`);
+      const runs = await runsResp.json();
+      const run = runs.workflow_runs.find(r =>
+        r.head_branch === 'master' && r.status !== 'completed' ||
+        (r.created_at && new Date(r.created_at) > new Date(Date.now() - 120000))
+      );
+      if (run) {
+        runId = run.id;
+        break;
+      }
+      await sleep(3000);
+    }
+
+    if (!runId) {
+      // Try to find a recently completed run
+      const runsResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/actions/runs?event=issues&per_page=5`);
+      const runs = await runsResp.json();
+      if (runs.workflow_runs.length > 0) {
+        runId = runs.workflow_runs[0].id;
+      } else {
+        throw new Error('Could not find the workflow run. Check GitHub Actions manually.');
+      }
+    }
+
+    text.textContent = 'Ghostscript is separating spot colors...';
+    fill.style.width = '65%';
+
+    // Poll until complete
+    let status = 'in_progress';
+    let conclusion = '';
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const runResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/actions/runs/${runId}`);
+      const runData = await runResp.json();
+      status = runData.status;
+      conclusion = runData.conclusion;
+
+      if (status === 'completed') break;
+
+      const pct = 65 + Math.min(attempt, 30);
+      fill.style.width = `${pct}%`;
+      text.textContent = `Ghostscript is separating spot colors... (${attempt * 5}s)`;
+      await sleep(5000);
+    }
+
+    if (conclusion === 'failure') {
+      throw new Error('Separation failed. Check the GitHub Actions log for details.');
+    }
+
+    // Step 5: Get artifact download URL
+    text.textContent = 'Getting download link...';
+    fill.style.width = '95%';
+
+    const artifactsResp = await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/actions/runs/${runId}/artifacts`);
+    const artifacts = await artifactsResp.json();
+    const artifact = artifacts.artifacts.find(a => a.name === 'spot-separations');
+
+    if (!artifact) throw new Error('No artifacts found in the completed run.');
+
+    // Step 6: Download artifact
+    fill.style.width = '100%';
+    progress.className = 'progress-panel done';
+    title.textContent = '✅ Done!';
+    text.textContent = 'Separation complete!';
+
+    // Get artifact download - need to use the API to get a redirect URL
+    const dlResp = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/artifacts/${artifact.id}/zip`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github+json'
+      }
+    });
+
+    if (dlResp.ok) {
+      const blob = await dlResp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'spot-separations.zip';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      download.style.display = 'block';
+      document.getElementById('downloadInfo').textContent =
+        `${files.length} file(s) processed • ${spots.join(', ')} extracted`;
+      document.getElementById('downloadLink').href = url;
+      document.getElementById('downloadLink').download = 'spot-separations.zip';
+    } else {
+      // Fallback: link to the Actions run page
+      download.style.display = 'block';
+      document.getElementById('downloadInfo').textContent =
+        `${files.length} file(s) processed • Click below to download from GitHub`;
+      const dlLink = document.getElementById('downloadLink');
+      dlLink.href = `https://github.com/${REPO_OWNER}/${REPO_NAME}/actions/runs/${runId}`;
+      dlLink.textContent = '⬇️ Download from GitHub';
+    }
+
+    // Cleanup: delete the draft release
+    try {
+      // Delete assets first
+      for (const a of assetUrls) {
+        await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${a.id}`, { method: 'DELETE' });
+      }
+      await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/releases/${releaseId}`, { method: 'DELETE' });
+      // Delete the tag
+      try {
+        await ghFetch(`/repos/${REPO_OWNER}/${REPO_NAME}/git/refs/tags/${tag}`, { method: 'DELETE' });
+      } catch(e) { /* tag may not exist for draft */ }
+    } catch(e) { console.warn('Cleanup failed:', e); }
+
+  } catch (err) {
+    progress.className = 'progress-panel error';
+    title.textContent = '❌ Error';
+    text.textContent = err.message;
+    showStatus(err.message, 'error');
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Separate';
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// --- Auto-load token on page load ---
+window.addEventListener('load', () => {
+  if (!getToken()) {
+    document.getElementById('tokenInput').style.display = 'block';
+    showStatus('First time? Paste your GitHub token below to get started.', 'info');
+  }
+});
+</script>
+
+</body>
+</html>
