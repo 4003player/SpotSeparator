@@ -331,7 +331,7 @@ async function startSeparation() {
 
     if (conclusion === 'failure') throw new Error('Separation failed. Check GitHub Actions log.');
 
-    // Step 5: Get artifacts and download each PDF individually
+    // Step 5: Download artifact directly as zip
     text.textContent = 'Downloading results...';
     fill.style.width = '95%';
 
@@ -340,7 +340,6 @@ async function startSeparation() {
     const artifact = artifacts.artifacts.find(a => a.name === 'spot-separations');
     if (!artifact) throw new Error('No artifacts found.');
 
-    // Download the zip, extract individual PDFs via JSZip-lite approach
     const dlResp = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/artifacts/${artifact.id}/zip`, {
       headers: { 'Authorization': `Bearer ${TOKEN}`, 'Accept': 'application/vnd.github+json' }
     });
@@ -348,39 +347,28 @@ async function startSeparation() {
     if (!dlResp.ok) throw new Error('Failed to download artifacts.');
 
     const zipBlob = await dlResp.blob();
-    const zipBuffer = await zipBlob.arrayBuffer();
-
-    // Parse zip to extract individual PDFs
-    const pdfFiles = await extractZipEntries(new Uint8Array(zipBuffer));
+    const url = URL.createObjectURL(zipBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'spot-separations.zip';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
 
     fill.style.width = '100%';
     progress.className = 'progress-panel done';
     title.textContent = '✅ Done!';
-    text.textContent = 'Separation complete!';
+    text.textContent = 'Separation complete — check your Downloads folder!';
 
-    // Show individual download buttons
     download.style.display = 'block';
+    const sizeKB = (zipBlob.size / 1024).toFixed(0);
     document.getElementById('downloadInfo').textContent =
-      `${pdfFiles.length} file(s) • ${spots.join(', ')} extracted`;
-
+      `${files.length} file(s) processed • ${spots.join(', ')} extracted • ${sizeKB} KB`;
     const dlList = document.getElementById('downloadList');
-    dlList.innerHTML = '';
-    pdfFiles.forEach(pf => {
-      const blob = new Blob([pf.data], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const div = document.createElement('div');
-      div.className = 'download-item';
-      div.innerHTML = `
-        <div><span class="dl-name">📄 ${pf.name}</span><span class="dl-size">${(pf.data.length / 1024).toFixed(0)} KB</span></div>
-        <a href="${url}" download="${pf.name}">⬇️ Download</a>
-      `;
-      dlList.appendChild(div);
-
-      // Auto-download each file
-      const a = document.createElement('a');
-      a.href = url; a.download = pf.name;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    });
+    dlList.innerHTML = `<div class="download-item">
+      <span class="dl-name">📦 spot-separations.zip</span>
+      <a href="${url}" download="spot-separations.zip">⬇️ Download Again</a>
+    </div>`;
 
     // Cleanup uploaded files
     try {
@@ -406,54 +394,6 @@ async function startSeparation() {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-// --- Minimal async zip parser (no dependencies) ---
-async function extractZipEntries(data) {
-  const entries = [];
-  let i = 0;
-  while (i < data.length - 4) {
-    if (data[i] === 0x50 && data[i+1] === 0x4b && data[i+2] === 0x03 && data[i+3] === 0x04) {
-      const compression = data[i+8] | (data[i+9] << 8);
-      const compSize = data[i+18] | (data[i+19] << 8) | (data[i+20] << 16) | (data[i+21] << 24);
-      const uncompSize = data[i+22] | (data[i+23] << 8) | (data[i+24] << 16) | (data[i+25] << 24);
-      const nameLen = data[i+26] | (data[i+27] << 8);
-      const extraLen = data[i+28] | (data[i+29] << 8);
-      const name = new TextDecoder().decode(data.slice(i+30, i+30+nameLen));
-      const dataStart = i + 30 + nameLen + extraLen;
-
-      if (name.toLowerCase().endsWith('.pdf') && compSize > 0) {
-        let fileData;
-        if (compression === 0) {
-          fileData = data.slice(dataStart, dataStart + compSize);
-        } else if (compression === 8) {
-          const raw = data.slice(dataStart, dataStart + compSize);
-          const ds = new DecompressionStream('deflate-raw');
-          const writer = ds.writable.getWriter();
-          writer.write(raw);
-          writer.close();
-          const reader = ds.readable.getReader();
-          const chunks = [];
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-          }
-          const total = chunks.reduce((s, c) => s + c.length, 0);
-          fileData = new Uint8Array(total);
-          let offset = 0;
-          for (const c of chunks) { fileData.set(c, offset); offset += c.length; }
-        }
-        if (fileData) {
-          entries.push({ name: name.split('/').pop(), data: fileData });
-        }
-      }
-      i = dataStart + compSize;
-    } else {
-      i++;
-    }
-  }
-  return entries;
-}
 </script>
 
 </body>
