@@ -11,7 +11,7 @@ permissions:
 jobs:
   separate:
     if: contains(github.event.issue.labels.*.name, 'separate') || startsWith(github.event.issue.title, '[Separate]')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -87,13 +87,17 @@ jobs:
         run: |
           mkdir -p input output
           echo '${{ steps.parse.outputs.pdfs }}' | python3 -c "
-          import json, sys, urllib.request
+          import json, sys, urllib.request, urllib.parse
           pdfs = json.load(sys.stdin)
           for i, pdf in enumerate(pdfs):
               name = pdf['name']
               url = pdf['url']
+              # Encode spaces and special chars in the URL path
+              parts = urllib.parse.urlsplit(url)
+              encoded_path = urllib.parse.quote(parts.path, safe='/:@')
+              safe_url = urllib.parse.urlunsplit((parts.scheme, parts.netloc, encoded_path, parts.query, parts.fragment))
               print(f'Downloading: {name}')
-              urllib.request.urlretrieve(url, f'input/{name}')
+              urllib.request.urlretrieve(safe_url, f'input/{name}')
               print(f'  Saved: input/{name}')
           "
 
