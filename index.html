@@ -121,8 +121,8 @@ h1{font-size:22px;font-weight:700;letter-spacing:-.3px}
 
 <script>
 // ── Server endpoint ──
-// Local dev: http://localhost:8080   Production: https://spot-separator-server.fly.dev
-const API_BASE = 'http://localhost:8080';
+// Production: https://spot-separator-server.fly.dev (scale-to-zero, first request after idle may take a few seconds)
+const API_BASE = 'https://spot-separator-server.fly.dev';
 
 let files = [];
 
